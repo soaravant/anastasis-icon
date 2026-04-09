@@ -99,10 +99,36 @@ const pinsLayerEl = document.getElementById('pins-layer');
 const imageFrameEl = document.getElementById('image-frame');
 const imageStageEl = document.getElementById('image-stage');
 
+const IMAGE_RATIO = 2656 / 1600;
+const MAX_SCALE = 5;
+
 let activePointId = null;
+const viewState = {
+    x: 0,
+    y: 0,
+    scale: 1
+};
+const layoutState = {
+    frameWidth: 0,
+    frameHeight: 0,
+    stageWidth: 0,
+    stageHeight: 0
+};
+const gestureState = {
+    pointers: new Map(),
+    mode: null,
+    startPointer: null,
+    startX: 0,
+    startY: 0,
+    startScale: 1,
+    startDistance: 0,
+    anchorX: 0,
+    anchorY: 0
+};
 
 function init() {
     renderPins();
+    updateStageLayout();
     resetView(false);
 
     closeModalButton.addEventListener('click', event => {
@@ -113,15 +139,25 @@ function init() {
         if (event.target.closest('.image-pin')) {
             return;
         }
+        if (isTouchDevice()) {
+            return;
+        }
         resetView(true);
     });
     window.addEventListener('resize', () => {
+        updateStageLayout();
         if (!activePointId) {
+            if (viewState.scale > 1) {
+                setView(clampView(viewState.x, viewState.y, viewState.scale), false);
+                return;
+            }
             resetView(false);
             return;
         }
         const point = POINTS.find(entry => entry.id === activePointId);
-        if (point) focusPoint(point, false);
+        if (point) {
+            focusPoint(point, false);
+        }
     });
 
     window.addEventListener('keydown', event => {
@@ -129,6 +165,10 @@ function init() {
             resetView(true);
         }
     });
+    imageFrameEl.addEventListener('pointerdown', onPointerDown);
+    imageFrameEl.addEventListener('pointermove', onPointerMove);
+    imageFrameEl.addEventListener('pointerup', onPointerEnd);
+    imageFrameEl.addEventListener('pointercancel', onPointerEnd);
 }
 
 function renderPins() {
@@ -163,20 +203,15 @@ function focusPoint(point, smooth = true) {
     updateInfo(point);
     modalEl.classList.remove('hidden');
 
-    const frameWidth = imageStageEl.clientWidth;
-    const frameHeight = imageStageEl.clientHeight;
+    const frameWidth = layoutState.frameWidth;
+    const frameHeight = layoutState.frameHeight;
     const scale = point.zoom;
-    const targetX = frameWidth * point.x;
-    const targetY = frameHeight * point.y;
+    const targetX = layoutState.stageWidth * point.x;
+    const targetY = layoutState.stageHeight * point.y;
 
-    const minTranslateX = frameWidth - (frameWidth * scale);
-    const minTranslateY = frameHeight - (frameHeight * scale);
-
-    const translateX = clamp((frameWidth / 2) - (targetX * scale), minTranslateX, 0);
-    const translateY = clamp((frameHeight / 2) - (targetY * scale), minTranslateY, 0);
-
-    imageStageEl.style.transitionDuration = smooth ? '650ms' : '0ms';
-    imageStageEl.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+    const nextX = (frameWidth / 2) - (targetX * scale);
+    const nextY = (frameHeight / 2) - (targetY * scale);
+    setView(clampView(nextX, nextY, scale), smooth);
 }
 
 function resetView(smooth = true) {
@@ -185,8 +220,11 @@ function resetView(smooth = true) {
     modalEl.classList.add('hidden');
     titleEl.textContent = 'Η Ανάσταση';
     descriptionEl.textContent = 'Πάτησε ένα pin πάνω στην εικόνα για να μεγεθύνεις σε αυτό το τμήμα της σύνθεσης.';
-    imageStageEl.style.transitionDuration = smooth ? '650ms' : '0ms';
-    imageStageEl.style.transform = 'translate(0px, 0px) scale(1)';
+    setView({
+        x: (layoutState.frameWidth - layoutState.stageWidth) / 2,
+        y: (layoutState.frameHeight - layoutState.stageHeight) / 2,
+        scale: 1
+    }, smooth);
 }
 
 function updateInfo(point) {
@@ -201,6 +239,203 @@ function syncActiveState() {
         pin.classList.toggle('is-muted', Boolean(activePointId) && !isActive);
         pin.setAttribute('aria-pressed', String(isActive));
     });
+}
+
+function updateStageLayout() {
+    const frameWidth = imageFrameEl.clientWidth;
+    const frameHeight = imageFrameEl.clientHeight;
+
+    let stageWidth = frameWidth;
+    let stageHeight = stageWidth / IMAGE_RATIO;
+
+    if (stageHeight > frameHeight) {
+        stageHeight = frameHeight;
+        stageWidth = stageHeight * IMAGE_RATIO;
+    }
+
+    layoutState.frameWidth = frameWidth;
+    layoutState.frameHeight = frameHeight;
+    layoutState.stageWidth = stageWidth;
+    layoutState.stageHeight = stageHeight;
+
+    imageStageEl.style.width = `${stageWidth}px`;
+    imageStageEl.style.height = `${stageHeight}px`;
+}
+
+function setView(nextView, smooth = true) {
+    viewState.x = nextView.x;
+    viewState.y = nextView.y;
+    viewState.scale = nextView.scale;
+    imageStageEl.style.transitionDuration = smooth ? '650ms' : '0ms';
+    imageStageEl.style.transform = `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.scale})`;
+    imageFrameEl.classList.toggle('is-zoomed', viewState.scale > 1.01);
+}
+
+function clampView(x, y, scale) {
+    const clampedScale = clamp(scale, 1, MAX_SCALE);
+    const scaledWidth = layoutState.stageWidth * clampedScale;
+    const scaledHeight = layoutState.stageHeight * clampedScale;
+    const minX = Math.min(0, layoutState.frameWidth - scaledWidth);
+    const maxX = Math.max(0, layoutState.frameWidth - scaledWidth);
+    const minY = Math.min(0, layoutState.frameHeight - scaledHeight);
+    const maxY = Math.max(0, layoutState.frameHeight - scaledHeight);
+
+    return {
+        x: clamp(x, minX, maxX),
+        y: clamp(y, minY, maxY),
+        scale: clampedScale
+    };
+}
+
+function onPointerDown(event) {
+    if (event.pointerType !== 'touch') {
+        return;
+    }
+    if (event.target.closest('.image-pin') && gestureState.pointers.size === 0) {
+        return;
+    }
+
+    const point = getLocalPoint(event);
+    gestureState.pointers.set(event.pointerId, point);
+    imageFrameEl.setPointerCapture(event.pointerId);
+
+    if (gestureState.pointers.size === 1) {
+        startPanGesture();
+        return;
+    }
+
+    startPinchGesture();
+}
+
+function onPointerMove(event) {
+    if (!gestureState.pointers.has(event.pointerId)) {
+        return;
+    }
+
+    gestureState.pointers.set(event.pointerId, getLocalPoint(event));
+
+    if (gestureState.pointers.size >= 2) {
+        event.preventDefault();
+        updatePinchGesture();
+        return;
+    }
+
+    if (gestureState.mode === 'pan') {
+        event.preventDefault();
+        updatePanGesture();
+    }
+}
+
+function onPointerEnd(event) {
+    if (!gestureState.pointers.has(event.pointerId)) {
+        return;
+    }
+
+    gestureState.pointers.delete(event.pointerId);
+    imageFrameEl.classList.remove('is-panning');
+
+    try {
+        imageFrameEl.releasePointerCapture(event.pointerId);
+    } catch (error) {
+        // Ignore capture release errors for already-released pointers.
+    }
+
+    if (gestureState.pointers.size >= 2) {
+        startPinchGesture();
+        return;
+    }
+
+    if (gestureState.pointers.size === 1) {
+        startPanGesture();
+        return;
+    }
+
+    gestureState.mode = null;
+}
+
+function startPanGesture() {
+    const [pointer] = gestureState.pointers.values();
+    if (!pointer) {
+        gestureState.mode = null;
+        return;
+    }
+
+    gestureState.mode = 'pan';
+    gestureState.startPointer = pointer;
+    gestureState.startX = viewState.x;
+    gestureState.startY = viewState.y;
+}
+
+function updatePanGesture() {
+    const [pointer] = gestureState.pointers.values();
+    if (!pointer || !gestureState.startPointer) {
+        return;
+    }
+
+    const deltaX = pointer.x - gestureState.startPointer.x;
+    const deltaY = pointer.y - gestureState.startPointer.y;
+    imageFrameEl.classList.toggle('is-panning', viewState.scale > 1.01);
+    setView(clampView(
+        gestureState.startX + deltaX,
+        gestureState.startY + deltaY,
+        viewState.scale
+    ), false);
+}
+
+function startPinchGesture() {
+    const [first, second] = Array.from(gestureState.pointers.values()).slice(0, 2);
+    if (!first || !second) {
+        return;
+    }
+
+    const center = getMidpoint(first, second);
+    gestureState.mode = 'pinch';
+    gestureState.startScale = viewState.scale;
+    gestureState.startDistance = Math.max(getDistance(first, second), 1);
+    gestureState.anchorX = (center.x - viewState.x) / viewState.scale;
+    gestureState.anchorY = (center.y - viewState.y) / viewState.scale;
+}
+
+function updatePinchGesture() {
+    const [first, second] = Array.from(gestureState.pointers.values()).slice(0, 2);
+    if (!first || !second) {
+        return;
+    }
+
+    const center = getMidpoint(first, second);
+    const distance = Math.max(getDistance(first, second), 1);
+    const scale = clamp(
+        gestureState.startScale * (distance / gestureState.startDistance),
+        1,
+        MAX_SCALE
+    );
+    const nextX = center.x - (gestureState.anchorX * scale);
+    const nextY = center.y - (gestureState.anchorY * scale);
+
+    setView(clampView(nextX, nextY, scale), false);
+}
+
+function getLocalPoint(event) {
+    const rect = imageFrameEl.getBoundingClientRect();
+    return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
+    };
+}
+
+function getDistance(first, second) {
+    return Math.hypot(second.x - first.x, second.y - first.y);
+}
+
+function getMidpoint(first, second) {
+    return {
+        x: (first.x + second.x) / 2,
+        y: (first.y + second.y) / 2
+    };
+}
+
+function isTouchDevice() {
+    return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 }
 
 function clamp(value, min, max) {
