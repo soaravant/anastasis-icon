@@ -90,39 +90,14 @@ button {
     padding-right: 2rem;
 }
 
-.eyebrow {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    color: var(--accent);
-}
-
 #pin-title {
     font-size: clamp(1.55rem, 3vw, 2.2rem);
     line-height: 1.05;
 }
 
-.pin-description,
-.pin-detail {
+.pin-description {
     line-height: 1.55;
     color: var(--muted);
-}
-
-.panel-actions {
-    display: flex;
-    flex-direction: column;
-    gap: 0.8rem;
-}
-
-#reset-view {
-    width: 100%;
-    border: none;
-    border-radius: 14px;
-    background: linear-gradient(135deg, var(--accent) 0%, #b45309 100%);
-    color: #1d1407;
-    font-weight: 700;
-    padding: 0.9rem 1rem;
-    cursor: pointer;
 }
 
 .image-frame {
